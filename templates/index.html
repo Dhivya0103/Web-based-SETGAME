@@ -47,7 +47,7 @@
 const { useState, useEffect, useRef } = React;
 
 // --- Socket.IO Setup ---
-const socket = io("https://web-based-setgame.onrender.com");
+const socket = io(window.location.origin);
 
 socket.on("connect", () => {
   console.log("✅ Connected to server");
@@ -199,7 +199,7 @@ const App = () => {
 
     socket.emit("create_room");
 
-    socket.on("room_created", (data) => {
+    socket.once("room_created", (data) => {
       setGameId(data.room_id);
       setPlayers({ [playerName]: 0 });
       setMessage(`✅ Room created: ${data.room_id}`);
@@ -211,13 +211,13 @@ const App = () => {
 
     socket.emit("join_room", { username: playerName, room: joinCode });
 
-    socket.on("player_joined", (data) => {
+    socket.once("player_joined", (data) => {
       setPlayers(data.players.reduce((acc, p) => ({ ...acc, [p]: 0 }), {}));
       setGameId(joinCode);
       setMessage(`✅ Joined room ${joinCode}`);
     });
 
-    socket.on("error", (err) => {
+    socket.once("error", (err) => {
       setMessage(`❌ ${err.message}`);
     });
   };

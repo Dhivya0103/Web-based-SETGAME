@@ -8,32 +8,24 @@ import string
 
 # --- Flask + Socket.IO setup ---
 app = Flask(__name__)
-socketio = SocketIO(app, cors_allowed_origins="*")
+socketio = SocketIO(app, cors_allowed_origins="*")   # ✅ allow frontend connections
 
-# --- In-memory storage for rooms ---
 rooms = {}  # room_id -> { 'players': [], 'scores': {} }
 
-# --- Routes ---
 @app.route("/")
-def index():
-    # Serve index.html (make sure it's inside a "templates" folder)
-    return render_template("index.html")
+def home():
+    return render_template("index.html")  # ✅ serve frontend UI
 
-# --- Socket.IO Events ---
 @socketio.on("create_room")
 def create_room():
-    """Create a new multiplayer room"""
-    room_id = "".join(random.choices(string.ascii_uppercase + string.digits, k=5))
+    room_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=5))
     rooms[room_id] = {"players": [], "scores": {}}
     emit("room_created", {"room_id": room_id})
 
-
 @socketio.on("join_room")
 def on_join(data):
-    """Join an existing room"""
-    username = data.get("username")
-    room_id = data.get("room")
-
+    username = data["username"]
+    room_id = data["room"]
     if room_id in rooms:
         join_room(room_id)
         rooms[room_id]["players"].append(username)
@@ -42,9 +34,6 @@ def on_join(data):
     else:
         emit("error", {"message": "Room does not exist"})
 
-
-# --- Entry Point ---
 if __name__ == "__main__":
-    # For local development
-    print("🚀 Running SET Game locally at http://127.0.0.1:1024")
+    print("🚀 Starting server...")
     socketio.run(app, host="0.0.0.0", port=1024, debug=True)
