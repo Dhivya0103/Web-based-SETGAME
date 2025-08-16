@@ -47,7 +47,8 @@
 const { useState, useEffect, useRef } = React;
 
 // --- Socket.IO Setup ---
-const socket = io("http://127.0.0.1:1024");
+const socket = io("https://web-based-setgame.onrender.com");
+
 socket.on("connect", () => {
   console.log("✅ Connected to server");
 });
