@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SET Game — Multiplayer</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+
+<style>
+  .card-container {
+    border: 2px solid #444;
+    border-radius: 10px;
+    background: white;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    box-shadow: 0px 3px 6px rgba(0,0,0,0.2);
+    transition: transform 0.2s, border-color 0.2s;
+    aspect-ratio: 2.5 / 3.5;
+    padding: 2px;
+    width: 100px;
+    height: auto;
+  }
+  .card-container:hover { transform: scale(1.05); }
+  .card-container.selected { border-color: gold; box-shadow: 0px 0px 10px gold; }
+  .card-container.hint { border-color: green; box-shadow: 0px 0px 10px green; }
+  .card-svg-wrapper { width: 60%; height: auto; }
+  .card-svg { width: 100%; height: 100%; margin: 0 auto; }
+
+  .grid-container {
+    display: grid;
+    grid-template-columns: repeat(3, auto);
+    gap: 4px;
+    justify-content: center;
+  }
+</style>
+</head>
+<body class="bg-gradient-to-br from-slate-900 via-indigo-900 to-purple-900 text-white min-h-screen">
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useRef } = React;
+
+// --- Socket.IO Setup ---
+const socket = io("http://127.0.0.1:1024");
+socket.on("connect", () => {
+  console.log("✅ Connected to server");
+});
+
+// --- Card logic ---
+const colors = ["red", "green", "purple"];
+const shapes = ["diamond", "squiggle", "oval"];
+const numbers = [1, 2, 3];
+const shadings = ["solid", "striped", "open"];
+
+const makeDeck = (full = true) => {
+  const deck = [];
+  colors.forEach(c => shapes.forEach(s => numbers.forEach(n => 
+    (full ? shadings : ["solid"]).forEach(sh => deck.push({ color: c, shape: s, number: n, shading: sh }))
+  )));
+  for (let i = deck.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [deck[i], deck[j]] = [deck[j], deck[i]];
+  }
+  return deck;
+};
+
+const isSet = (a, b, c) => {
+  const check = key => {
+    const vals = [a[key], b[key], c[key]];
+    return new Set(vals).size !== 2;
+  };
+  return check("color") && check("shape") && check("number") && check("shading");
+};
+
+const Card = ({ card, selected, hinted, onClick }) => {
+  if (!card) return null;
+  const fill = card.shading === "solid" ? card.color : card.shading === "striped" ? `url(#pat-${card.color})` : "none";
+  const stroke = card.color;
+  const paths = {
+    diamond: "M40 5 L75 40 L40 75 L5 40 Z", 
+    oval: "M40,5 C 60,5 75,30 75,40 C 75,50 60,75 40,75 C 20,75 5,50 5,40 C 5,30 20,5 40,5 Z",
+    squiggle: "M20 20 C 50 0, 60 80, 80 60 S 50 80, 20 60 C 0 40, 0 20, 20 20 Z",
+  };
+  const getTranslateY = (num, idx) => {
+    const offsets = { 1: [0], 2: [-15, 15], 3: [-25, 0, 25] };
+    return offsets[num][idx];
+  };
+  return (
+    <button onClick={onClick} className={`bg-white text-black rounded-lg shadow card-container ${selected ? 'selected' : ''} ${hinted ? 'hint' : ''}`}>
+      <div className="card-svg-wrapper">
+        <svg viewBox="0 0 80 80" className="card-svg">
+          <defs>
+            {colors.map(c => (
+              <pattern key={c} id={`pat-${c}`} patternUnits="userSpaceOnUse" width="6" height="6">
+                <path d="M0 6 L6 0" stroke={c} strokeWidth="1"/>
+              </pattern>
+            ))}
+          </defs>
+          {Array.from({ length: card.number }).map((_, i) => (
+            <path key={i} d={paths[card.shape]} transform={`translate(0,${getTranslateY(card.number, i)})`} fill={fill} stroke={stroke} strokeWidth="2"/>
+          ))}
+        </svg>
+      </div>
+    </button>
+  );
+};
+
+// --- Main App ---
+const App = () => {
+  const [deck, setDeck] = useState([]);
+  const [table, setTable] = useState([]);
+  const [selected, setSelected] = useState([]);
+  const [hinted, setHinted] = useState([]);
+  const [message, setMessage] = useState('');
+  const [timer, setTimer] = useState(0);
+  const [score, setScore] = useState(0);
+  const [showTutorial, setShowTutorial] = useState(false);
+  const [joinCode, setJoinCode] = useState('');
+  const [gameId, setGameId] = useState(null);
+  const [mode, setMode] = useState(81);
+  const [playerName, setPlayerName] = useState('');
+  const [players, setPlayers] = useState({});
+  const timerRef = useRef(null);
+
+  useEffect(() => () => clearInterval(timerRef.current), []);
+
+  const startTimer = () => {
+    clearInterval(timerRef.current);
+    setTimer(0);
+    timerRef.current = setInterval(() => setTimer(t => t + 1), 1000);
+  };
+
+  const startGame = (full = true) => {
+    clearInterval(timerRef.current);
+    const d = makeDeck(full);
+    setMode(full ? 81 : 27);
+    setDeck(d.slice(12));
+    setTable(d.slice(0, 12));
+    setSelected([]); setHinted([]); setMessage(''); setScore(0);
+    setGameId(null); setPlayers({});
+  };
+
+  const clickCard = idx => {
+    if (selected.includes(idx)) setSelected(selected.filter(i => i !== idx));
+    else if (selected.length < 3) setSelected([...selected, idx]);
+  };
+
+  const submitSet = () => {
+    if (selected.length !== 3) return;
+    const [a, b, c] = selected.map(i => table[i]);
+    if (isSet(a, b, c)) {
+      const newScore = score + 1;
+      setScore(newScore);
+      const remaining = table.filter((_, i) => !selected.includes(i));
+      const newCards = deck.slice(0, 3);
+      const newTable = [...remaining, ...newCards];
+      setTable(newTable); setDeck(deck.slice(3)); setMessage('✅ Set found!');
+    } else setMessage('❌ Not a set!');
+    setSelected([]); setHinted([]);
+  };
+
+  const hint = () => {
+    for (let i = 0; i < table.length - 2; i++)
+      for (let j = i + 1; j < table.length - 1; j++)
+        for (let k = j + 1; k < table.length; k++)
+          if (isSet(table[i], table[j], table[k])) {
+            setHinted([i, j, k]); return;
+          }
+    setMessage('No set found.');
+  };
+
+  const dealThree = () => {
+    const newCards = deck.slice(0, 3);
+    if (!newCards.length) return setMessage("No more cards in the deck!");
+    setTable([...table, ...newCards]);
+    setDeck(deck.slice(3));
+  };
+
+  const endGame = () => {
+    clearInterval(timerRef.current);
+    let finalMessage = `Game Over! Your score: ${score}`;
+    if (gameId && Object.keys(players).length > 0) {
+      const winner = Object.keys(players).reduce((a, b) => players[a] > players[b] ? a : b);
+      finalMessage = `Game Over! Winner: ${winner} (${players[winner]} pts)`;
+    }
+    setMessage(finalMessage); setGameId(null); setTable([]);
+  };
+
+  // --- Multiplayer with Socket.IO ---
+  const createMultiplayer = () => {
+    if (!playerName) return setMessage("Enter your name to create a game.");
+
+    socket.emit("create_room");
+
+    socket.on("room_created", (data) => {
+      setGameId(data.room_id);
+      setPlayers({ [playerName]: 0 });
+      setMessage(`✅ Room created: ${data.room_id}`);
+    });
+  };
+
+  const joinMultiplayer = () => {
+    if (!playerName || !joinCode) return setMessage("Enter name & game code.");
+
+    socket.emit("join_room", { username: playerName, room: joinCode });
+
+    socket.on("player_joined", (data) => {
+      setPlayers(data.players.reduce((acc, p) => ({ ...acc, [p]: 0 }), {}));
+      setGameId(joinCode);
+      setMessage(`✅ Joined room ${joinCode}`);
+    });
+
+    socket.on("error", (err) => {
+      setMessage(`❌ ${err.message}`);
+    });
+  };
+
+  return (
+    <div className="flex">
+      {/* Sidebar */}
+      <div className="w-64 bg-slate-800 p-4 flex flex-col gap-3">
+        <h1 className="text-xl font-bold mb-2">SET Game</h1>
+        <input value={playerName} onChange={e => setPlayerName(e.target.value)} placeholder="Enter your name" className="text-black rounded px-2 py-1"/>
+        <button onClick={() => startGame(true)} className="bg-blue-500 px-3 py-1 rounded">Single Player</button>
+        <button onClick={() => startGame(false)} className="bg-purple-500 px-3 py-1 rounded">27 Cards</button>
+        <button onClick={() => startGame(true)} className="bg-purple-700 px-3 py-1 rounded">81 Cards</button>
+        <button onClick={startTimer} className="bg-blue-400 px-3 py-1 rounded">Start Timer</button>
+        <button onClick={dealThree} className="bg-yellow-500 px-3 py-1 rounded">Deal 3 Cards</button>
+        <button onClick={submitSet} className="bg-green-400 px-3 py-1 rounded">Submit Set</button>
+        <button onClick={hint} className="bg-yellow-400 px-3 py-1 rounded">Hint</button>
+        <button onClick={() => setShowTutorial(true)} className="bg-indigo-500 px-3 py-1 rounded">Tutorial</button>
+        <button onClick={endGame} className="bg-red-500 px-3 py-1 rounded">End Game</button>
+
+        <hr className="border-gray-600"/>
+        <button onClick={createMultiplayer} className="bg-green-500 px-3 py-1 rounded">Create Multiplayer</button>
+        <input value={joinCode} onChange={e => setJoinCode(e.target.value)} placeholder="Game Code" className="text-black rounded px-2 py-1"/>
+        <button onClick={joinMultiplayer} className="bg-green-700 px-3 py-1 rounded">Join Multiplayer</button>
+        
+        {gameId && (
+          <div className="mt-3">
+            <p className="font-bold">Game ID: {gameId}</p>
+            {Object.entries(players).map(([n, s]) => (<p key={n}>{n}: {s}</p>))}
+          </div>
+        )}
+      </div>
+
+      {/* Game Area */}
+      <div className="flex-1 p-4">
+        <div className="mb-2">
+          Timer: {String(Math.floor(timer / 60)).padStart(2, '0')}:{String(timer % 60).padStart(2, '0')} | Score: {score} | Cards: {table.length} / {table.length + deck.length}
+        </div>
+        {message && <p className="mb-2">{message}</p>}
+        <div className="grid-container">
+          {table.map((card, idx) => (
+            <Card key={idx} card={card} selected={selected.includes(idx)} hinted={hinted.includes(idx)} onClick={() => clickCard(idx)}/>
+          ))}
+        </div>
+
+        {/* Tutorial Modal */}
+        {showTutorial && (
+          <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50">
+            <div className="bg-white text-black p-4 rounded max-w-md max-h-[80vh] overflow-y-auto">
+              <h2 className="text-lg font-bold mb-2">How to Play SET</h2>
+              <p>Select 3 cards that form a set. A set means for each property (color, shape, number, shading) they are either all the same or all different.</p>
+              <ul className="list-disc pl-4">
+                <li>Color: red, green, purple</li>
+                <li>Shape: oval, squiggle, diamond</li>
+                <li>Number: 1, 2, 3</li>
+                <li>Shading: solid, striped, open</li>
+              </ul>
+              <button onClick={() => setShowTutorial(false)} className="bg-indigo-500 text-white px-3 py-1 rounded mt-3">Close</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>

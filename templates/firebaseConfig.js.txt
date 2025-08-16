@@ -1,0 +1,68 @@
+// === Firebase + Multiplayer Initialization ===
+
+// Import Firebase SDK functions
+import { initializeApp } from "firebase/app";
+import { getAuth, signInAnonymously } from "firebase/auth";
+import { getFirestore, doc, getDoc } from "firebase/firestore";
+import { getDatabase } from "firebase/database";
+
+// --- DIRECT CONFIG (replace with your actual values) ---
+const firebaseConfig = {
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+  databaseURL: "https://YOUR_PROJECT_ID.firebaseio.com",
+  projectId: "YOUR_PROJECT_ID",
+  storageBucket: "YOUR_PROJECT_ID.appspot.com",
+  messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+  appId: "YOUR_APP_ID"
+};
+
+// --- Force multiplayer on if config exists ---
+let multiplayerEnabled = true;
+if (!firebaseConfig || !firebaseConfig.apiKey) {
+  console.warn("⚠ Firebase config missing — defaulting to singleplayer.");
+  multiplayerEnabled = false;
+}
+
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
+export const auth = getAuth(app);
+export const firestore = getFirestore(app);
+export const realtimeDB = getDatabase(app);
+
+// === Firestore connectivity check ===
+let firestoreOK = false;
+
+// We'll run this once at startup and export the promise so game code can await it
+export const firestoreReady = (async () => {
+  try {
+    // Attempt anonymous sign-in so rules allow reads
+    await signInAnonymously(auth);
+
+    // Use a safe collection/doc name for the test
+    const testRef = doc(firestore, "test", "ping");
+    await getDoc(testRef);
+
+    firestoreOK = true;
+    console.log("✅ Firestore connectivity check passed");
+    return true;
+  } catch (err) {
+    firestoreOK = false;
+    console.warn("❌ Firestore connectivity check failed:", err.code, err.message);
+    return false;
+  }
+})();
+
+// Also export boolean (will be false until the above promise resolves)
+export { firestoreOK };
+
+// === Multiplayer Game Logic ===
+export function initGame() {
+  if (multiplayerEnabled) {
+    console.log("✅ Multiplayer enabled — connecting to Firebase...");
+    // Example: connectToLobby(auth, firestore, realtimeDB);
+  } else {
+    console.log("🎮 Singleplayer mode active.");
+    // Load singleplayer flow
+  }
+}
