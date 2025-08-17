@@ -1,39 +1,30 @@
-import eventlet
-eventlet.monkey_patch()
+from flask import Flask, send_from_directory
+from flask_socketio import SocketIO, emit, join_room
+import uuid
 
-from flask import Flask, render_template
-from flask_socketio import SocketIO, join_room, emit
-import random
-import string
-
-# --- Flask + Socket.IO setup ---
-app = Flask(__name__)
-socketio = SocketIO(app, cors_allowed_origins="*")   # ✅ allow frontend connections
-
-rooms = {}  # room_id -> { 'players': [], 'scores': {} }
+app = Flask(__name__, static_folder="templates", static_url_path="")
+socketio = SocketIO(app, cors_allowed_origins="*")
 
 @app.route("/")
 def home():
-    return render_template("index.html")  # ✅ serve frontend UI
+    return send_from_directory("templates", "index.html")
 
+# multiplayer events
 @socketio.on("create_room")
-def create_room():
-    room_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=5))
-    rooms[room_id] = {"players": [], "scores": {}}
+def handle_create_room(data):
+    room_id = str(uuid.uuid4())[:6]
+    join_room(room_id)
     emit("room_created", {"room_id": room_id})
 
 @socketio.on("join_room")
-def on_join(data):
-    username = data["username"]
-    room_id = data["room"]
-    if room_id in rooms:
-        join_room(room_id)
-        rooms[room_id]["players"].append(username)
-        rooms[room_id]["scores"][username] = 0
-        emit("player_joined", {"players": rooms[room_id]["players"]}, to=room_id)
-    else:
-        emit("error", {"message": "Room does not exist"})
+def handle_join(data):
+    username = data.get("username")
+    room = data.get("room")
+    if not room:
+        emit("error", {"message": "Room code required"})
+        return
+    join_room(room)
+    emit("player_joined", {"players": [username]}, room=room)
 
 if __name__ == "__main__":
-    print("🚀 Starting server...")
     socketio.run(app, host="0.0.0.0", port=1024, debug=True)
