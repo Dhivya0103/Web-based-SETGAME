@@ -9,14 +9,6 @@
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-  <style>
-    .card-container { border: 2px solid transparent; border-radius: 12px; background: white; display: flex; flex-direction: column; justify-content: center; align-items: center; box-shadow: 0 3px 6px rgba(0,0,0,0.2); transition: transform 0.2s, border-color 0.2s; aspect-ratio: 2.5 / 3.5; padding: 4px; width: 78px; height: 108px; }
-    .card-container:hover { transform: scale(1.04); }
-    .card-container.selected { border-color: gold; box-shadow: 0 0 10px gold; }
-    .card-container.hint { border-color: #22c55e; box-shadow: 0 0 10px #22c55e; }
-    .card-svg-wrapper { width: 56%; height: auto; }
-    .card-svg { width: 100%; height: 100%; margin: 0 auto; overflow: visible; }
-  </style>
 </head>
 <body class="bg-gradient-to-br from-slate-900 via-indigo-900 to-purple-900 text-white min-h-screen">
   <div id="root"></div>
@@ -25,9 +17,8 @@
   const { useState, useEffect, useRef } = React;
   const socket = io("http://localhost:4000");
 
-  // --- Card logic (simpler, high-contrast symbols) ---
   const colors = ["red", "green", "blue"];
-  const shapes = ["circle", "diamond", "pill"]; // easy to tell apart
+  const shapes = ["circle", "diamond", "pill"];
   const numbers = [1, 2, 3];
   const shadings = ["solid", "striped", "open"];
 
@@ -35,7 +26,6 @@
     const deck = [];
     colors.forEach(c => shapes.forEach(s => numbers.forEach(n =>
       (full ? shadings : ["solid"]).forEach(sh => deck.push({ color: c, shape: s, number: n, shading: sh })))));
-    // shuffle
     for (let i = deck.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [deck[i], deck[j]] = [deck[j], deck[i]];
@@ -46,18 +36,9 @@
   const isSet = (a, b, c) => {
     const check = key => {
       const vals = [a[key], b[key], c[key]];
-      return new Set(vals).size !== 2; // not exactly-two-of-a-kind
+      return new Set(vals).size !== 2;
     };
     return check("color") && check("shape") && check("number") && check("shading");
-  };
-
-  const whichFail = (a, b, c) => {
-    const fails = [];
-    ["color","shape","number","shading"].forEach(key => {
-      const size = new Set([a[key], b[key], c[key]]).size;
-      if (size === 2) fails.push(key);
-    });
-    return fails;
   };
 
   const findSet = (cards) => {
@@ -72,7 +53,6 @@
     if (!card) return null;
     const stroke = card.color;
     const fill = card.shading === "solid" ? card.color : card.shading === "striped" ? `url(#pat-${card.color})` : "none";
-
     const offsets = { 1: [0], 2: [-14, 14], 3: [-22, 0, 22] };
 
     return (
@@ -86,7 +66,6 @@
                 </pattern>
               ))}
             </defs>
-
             {offsets[card.number].map((dy, i) => (
               <g key={i} transform={`translate(0, ${dy})`}>
                 {card.shape === "circle" && (
@@ -106,7 +85,6 @@
     );
   };
 
-  // --- Main App ---
   const App = () => {
     const [deck, setDeck] = useState([]);
     const [table, setTable] = useState([]);
@@ -122,7 +100,6 @@
     const [showTutorial, setShowTutorial] = useState(true);
     const timerRef = useRef(null);
 
-    // helper to normalize players payloads from server
     const normalizePlayers = (arr) => {
       if (!Array.isArray(arr)) return [];
       return arr.map(p => {
@@ -169,11 +146,17 @@
 
       socket.on("scoreboard", (updatedPlayers) => {
         const list = normalizePlayers(updatedPlayers);
-  	if (list.length) {
-  	  // sort by score descending
-   	 list.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
-    	setPlayers(list);
-  	}
+        if (list.length) {
+          list.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+          setPlayers(list);
+        }
+      });
+
+      // 🎉 Handle game over
+      socket.on("game_over", ({ winner }) => {
+        setMessage(`🎉 Game Over! Winner is ${winner.name} with ${winner.score} points!`);
+        alert(`🎉 Game Over! Winner is ${winner.name} with ${winner.score} points!`);
+        setGameStarted(false);
       });
 
       return () => {
@@ -181,6 +164,7 @@
         socket.off("player_joined");
         socket.off("game_state");
         socket.off("scoreboard");
+        socket.off("game_over");
       };
     }, [playerName, isHost, deck, table, gameId, gameStarted]);
 
@@ -195,11 +179,11 @@
 
     const ensureSelfInPlayers = () => {
       setPlayers(prev => {
-    	if (prev.length === 0) return [{ name: playerName, score: 0 }];
-    	const hasSelf = prev.some(p => p.name === playerName);
-    	return hasSelf ? prev : [...prev, { name: playerName, score: 0 }];
-       });
-      };
+        if (prev.length === 0) return [{ name: playerName, score: 0 }];
+        const hasSelf = prev.some(p => p.name === playerName);
+        return hasSelf ? prev : [...prev, { name: playerName, score: 0 }];
+      });
+    };
 
     const startGame = (full = true) => {
       const d = makeDeck(full);
@@ -209,7 +193,7 @@
       setSelected([]); setHinted([]); setMessage('');
       setTimer(0);
       setShowTutorial(false);
-      ensureSelfInPlayers(); // always show a scoreboard entry locally
+      ensureSelfInPlayers();
     };
 
     const clickCard = idx => {
@@ -223,28 +207,18 @@
         return;
       }
       const [a, b, c] = selected.map(i => table[i]);
-      if (!a || !b || !c) return; // safety
+      if (!a || !b || !c) return;
       if (isSet(a, b, c)) {
         const remaining = table.filter((_, i) => !selected.includes(i));
         const newCards = deck.slice(0, 3);
         const newTable = [...remaining, ...newCards];
         const newDeck = deck.slice(3);
         broadcastState(newDeck, newTable);
-
-        // update score locally (works for single or multiplayer)
         setPlayers(prev => prev.map(p => p.name === (playerName || 'You') ? { ...p, score: (p.score || 0) + 1 } : p));
         if (gameId) socket.emit("score_update", { room: gameId, username: playerName || 'You' });
-
         setMessage("✅ Set found!");
-        const noMoreCards = newDeck.length === 0;
-        const noMoreSets = findSet(newTable) === null;
-        if (noMoreCards && noMoreSets) {
-          const winner = [...players].sort((x, y) => (y.score||0) - (x.score||0))[0] || { name: playerName || 'You', score: 0 };
-          setTimeout(() => alert(`🎉 Game Over! Winner is ${winner.name} with ${winner.score} points!`), 50);
-        }
       } else {
-        const fails = whichFail(a, b, c);
-        alert(`❌ Not a set! Conflicts in: ${fails.join(', ') || 'unknown'}`);
+        alert("❌ Not a set!");
       }
       setSelected([]); setHinted([]);
     };
@@ -279,19 +253,6 @@
       <div className="p-4 flex flex-col items-center">
         <h1 className="text-2xl font-bold mb-2">SET Game</h1>
 
-        {showTutorial && !gameStarted && (
-          <div className="bg-gray-800 p-4 rounded mb-4 max-w-md text-left">
-            <h2 className="font-bold text-lg mb-2">How to Play</h2>
-            <ul className="list-disc list-inside text-sm space-y-1">
-              <li>Each card has a color, shape, number, and shading.</li>
-              <li>A set is 3 cards where each feature is either all the same or all different.</li>
-              <li>Select 3 cards and click "Submit Set".</li>
-              <li>You can request a hint or deal 3 more cards if needed.</li>
-              <li>Game ends when no sets remain and the deck is empty.</li>
-            </ul>
-          </div>
-        )}
-
         <div className="text-center mb-4">
           Timer: {String(Math.floor(timer / 60)).padStart(2,'0')}:{String(timer % 60).padStart(2,'0')}
           <span className="ml-4">Cards: {table.length} / {table.length + deck.length}</span>
@@ -310,15 +271,6 @@
           </div>
         ) : (
           <>
-            {isHost && !gameStarted && (
-              <div className="mt-4 p-4 bg-gray-800 rounded text-center">
-                <p className="mb-1">Game ID: <span className="font-mono">{gameId}</span></p>
-                <p>Select mode:</p>
-                <button onClick={() => startGame(false)} className="bg-purple-500 px-3 py-1 m-1 rounded">27 Cards</button>
-                <button onClick={() => startGame(true)} className="bg-purple-700 px-3 py-1 m-1 rounded">81 Cards</button>
-              </div>
-            )}
-
             <div className="bg-gray-800 p-3 rounded mb-3 w-80 text-center">
               <h2 className="font-bold mb-2 text-lg">Scoreboard</h2>
               {players.length === 0 ? (
@@ -346,7 +298,6 @@
               {table.map((card, idx) => (
                 <Card key={idx} card={card} selected={selected.includes(idx)} hinted={hinted.includes(idx)} onClick={() => clickCard(idx)}/>
               ))}
-	    
             </div>
           </>
         )}
