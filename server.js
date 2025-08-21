@@ -4,108 +4,94 @@ const { Server } = require("socket.io");
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, {
-  cors: { origin: "*" }
-});
+const io = new Server(server);
 
-const rooms = {};
-// Structure:
-// rooms[roomId] = {
-//   players: [{ id, name, score }],
-//   state: { deck, table, gameStarted, timer },
-//   timerInterval
-// };
+const PORT = process.env.PORT || 4000;
+
+// store games { roomId: { players: [ {id, name, score} ], deck, table, started } }
+const games = {};
+
+app.get("/", (req, res) => {
+  res.send("SET Game Server is running ✅");
+});
 
 io.on("connection", (socket) => {
   console.log("User connected:", socket.id);
 
-  // Create room
-  socket.on("create_room", ({ username, duration }) => {
-    const roomId = Math.random().toString(36).substr(2, 6).toUpperCase();
-    rooms[roomId] = {
+  // Create a room
+  socket.on("create_room", ({ username }) => {
+    const roomId = Math.random().toString(36).substring(2, 6).toUpperCase();
+    games[roomId] = {
       players: [{ id: socket.id, name: username, score: 0 }],
-      state: { deck: [], table: [], gameStarted: false, timer: duration || 300 },
-      timerInterval: null
+      deck: [],
+      table: [],
+      started: false,
     };
     socket.join(roomId);
     socket.emit("room_created", { room_id: roomId });
-    console.log(`Room ${roomId} created by ${username}`);
-
-    // Start countdown timer for the room
-    startTimer(roomId);
+    console.log(`Room created: ${roomId}`);
   });
 
   // Join room
   socket.on("join_room", ({ username, room }) => {
-    if (!rooms[room]) return;
-    rooms[room].players.push({ id: socket.id, name: username, score: 0 });
+    if (!games[room]) {
+      socket.emit("error_message", { error: "Room not found" });
+      return;
+    }
+    games[room].players.push({ id: socket.id, name: username, score: 0 });
     socket.join(room);
 
+    // notify everyone
     io.to(room).emit("player_joined", {
       username,
-      players: rooms[room].players
+      players: games[room].players,
     });
-
-    // Send current game state + scoreboard
-    socket.emit("game_state", rooms[room].state);
-    io.to(room).emit("scoreboard", rooms[room].players);
-
-    console.log(`${username} joined room ${room}`);
   });
 
-  // Update game state
+  // Sync state from host
   socket.on("update_state", ({ room, deck, table, gameStarted }) => {
-    if (!rooms[room]) return;
-    rooms[room].state = { ...rooms[room].state, deck, table, gameStarted };
-    io.to(room).emit("game_state", rooms[room].state);
+    if (games[room]) {
+      games[room].deck = deck;
+      games[room].table = table;
+      games[room].started = gameStarted;
+      socket.to(room).emit("game_state", { deck, table, gameStarted });
+    }
   });
 
-  // When a set is found
-  socket.on("found_set", ({ room }) => {
-    if (!rooms[room]) return;
-    const p = rooms[room].players.find(x => x.id === socket.id);
-    if (p) p.score += 1;
-
-    io.to(room).emit("scoreboard", rooms[room].players);
+  // Handle scoring
+  socket.on("score_update", ({ room, username }) => {
+    if (!games[room]) return;
+    const player = games[room].players.find((p) => p.name === username);
+    if (player) {
+      player.score += 1;
+      console.log(`${username} scored! -> ${player.score}`);
+    }
+    // ✅ broadcast updated scoreboard to ALL clients in room
+    io.to(room).emit("scoreboard", games[room].players);
   });
 
+  // Handle sync request
+  socket.on("sync_state", ({ room, deck, table, gameStarted }) => {
+    if (games[room]) {
+      games[room].deck = deck;
+      games[room].table = table;
+      games[room].started = gameStarted;
+      io.to(room).emit("game_state", { deck, table, gameStarted });
+    }
+  });
+
+  // Disconnect cleanup
   socket.on("disconnect", () => {
-    console.log("User disconnected:", socket.id);
-    for (const roomId in rooms) {
-      const room = rooms[roomId];
-      const idx = room.players.findIndex(p => p.id === socket.id);
-      if (idx !== -1) {
-        room.players.splice(idx, 1);
-        io.to(roomId).emit("scoreboard", room.players);
-      }
+    for (const room in games) {
+      games[room].players = games[room].players.filter(
+        (p) => p.id !== socket.id
+      );
+      io.to(room).emit("scoreboard", games[room].players);
     }
+    console.log("User disconnected:", socket.id);
   });
 });
 
-// Timer function
-function startTimer(roomId) {
-  const room = rooms[roomId];
-  if (!room) return;
-
-  if (room.timerInterval) clearInterval(room.timerInterval);
-
-  room.timerInterval = setInterval(() => {
-    if (!room.state) return;
-    room.state.timer -= 1;
-
-    // Broadcast timer
-    io.to(roomId).emit("timer_update", room.state.timer);
-
-    if (room.state.timer <= 0) {
-      clearInterval(room.timerInterval);
-      io.to(roomId).emit("game_over", {
-        players: room.players
-      });
-    }
-  }, 1000);
-}
-
-const PORT = process.env.PORT || 4000;
-server.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-});
+server.listen(PORT, () =>
+  console.log(`✅ Server running on http://localhost:${PORT}`)
+);
