@@ -27,5 +27,4 @@ def handle_join(data):
     emit("player_joined", {"players": [username]}, room=room)
 
 if __name__ == "__main__":
-    # Corrected port to match the frontend (4000)
-    socketio.run(app, host="0.0.0.0", port=4000, debug=True)
+    socketio.run(app, host="0.0.0.0", port=1024, debug=True)
