@@ -23,6 +23,8 @@
 
   <script type="text/babel">
   const { useState, useEffect, useRef } = React;
+  // Use http://localhost:1024 to connect to the backend running locally
+  // For a production deployment (e.g., on Render), you would change this to `const socket = io();`
   const socket = io("http://localhost:1024");
 
   // --- Card logic (simpler, high-contrast symbols) ---

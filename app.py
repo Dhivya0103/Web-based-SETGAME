@@ -15,10 +15,12 @@ rooms = {}
 
 @app.route("/")
 def home():
+    """Serves the main HTML file."""
     return send_from_directory(".", "index.html")
 
 @socketio.on("create_room")
 def handle_create_room(data):
+    """Handles a player's request to create a new game room."""
     room_id = str(uuid.uuid4())[:6]
     join_room(room_id)
     rooms[room_id] = {
@@ -32,6 +34,7 @@ def handle_create_room(data):
 
 @socketio.on("join_room")
 def handle_join(data):
+    """Handles a player joining an existing room."""
     username = data.get("username")
     room_id = data.get("room")
 
@@ -51,6 +54,7 @@ def handle_join(data):
 
 @socketio.on("start_game")
 def handle_start_game(data):
+    """Initiates the game and broadcasts the initial state."""
     room_id = data.get("room")
     game_data = data.get("game_data")
     if room_id in rooms:
@@ -61,6 +65,7 @@ def handle_start_game(data):
 
 @socketio.on("submit_set")
 def handle_submit_set(data):
+    """Validates a submitted set, updates the score, and broadcasts the new state."""
     room_id = data.get("room")
     username = data.get("username")
     new_deck = data.get("newDeck")
@@ -71,7 +76,7 @@ def handle_submit_set(data):
         rooms[room_id]['deck'] = new_deck
         rooms[room_id]['table'] = new_table
 
-        # Update the score
+        # Update the score for the submitting player
         for p in rooms[room_id]['players']:
             if p['name'] == username:
                 p['score'] += 1
@@ -83,6 +88,7 @@ def handle_submit_set(data):
 
 @socketio.on("deal_three")
 def handle_deal_three(data):
+    """Deals three more cards and updates the server state."""
     room_id = data.get("room")
     new_deck = data.get("newDeck")
     new_table = data.get("newTable")
