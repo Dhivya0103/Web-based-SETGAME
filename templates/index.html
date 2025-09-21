@@ -23,7 +23,7 @@
 
   <script type="text/babel">
   const { useState, useEffect, useRef } = React;
-  const socket = io("http://localhost:4000");
+  const socket = io("http://localhost:1024");
 
   // --- Card logic (simpler, high-contrast symbols) ---
   const colors = ["red", "green", "blue"];
@@ -127,7 +127,6 @@
       if (!Array.isArray(arr)) return [];
       return arr.map(p => {
         if (typeof p === 'string') return { name: p, score: 0 };
-        if (p && p.username && !p.name) return { name: p.username, score: p.score ?? 0 };
         return { name: p.name ?? 'Player', score: p.score ?? 0 };
       });
     };
@@ -141,75 +140,63 @@
         clearInterval(timerRef.current);
         timerRef.current = null;
       }
-      return () => {};
+      return () => clearInterval(timerRef.current);
     }, [gameStarted]);
 
     useEffect(() => {
       socket.on("room_created", (data) => {
         setGameId(data.room_id);
         setIsHost(true);
-        setPlayers(prev => prev.length ? prev : [{ name: playerName || 'You', score: 0 }]);
         setMessage(`Room created: ${data.room_id}`);
-      });
-
-      socket.on("player_joined", (data) => {
-        const list = normalizePlayers(data.players);
-        setPlayers(list.length ? list : [{ name: playerName || 'You', score: 0 }]);
-        setMessage(`Player joined: ${data.username || ''}`);
-        if (isHost) {
-          socket.emit("sync_state", { room: gameId, deck, table, gameStarted });
-        }
       });
 
       socket.on("game_state", (state) => {
         setDeck(state.deck || []);
         setTable(state.table || []);
         setGameStarted(!!state.gameStarted);
+        if (state.players) {
+          const sortedPlayers = normalizePlayers(state.players).sort((a,b) => (b.score ?? 0) - (a.score ?? 0));
+          setPlayers(sortedPlayers);
+        }
       });
 
       socket.on("scoreboard", (updatedPlayers) => {
         const list = normalizePlayers(updatedPlayers);
-  	if (list.length) {
-  	  // sort by score descending
-   	 list.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
-    	setPlayers(list);
-  	}
+        if (list.length) {
+          list.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+          setPlayers(list);
+        }
+      });
+      
+      socket.on("error", (data) => {
+        setMessage(`Error: ${data.message}`);
       });
 
       return () => {
         socket.off("room_created");
-        socket.off("player_joined");
         socket.off("game_state");
         socket.off("scoreboard");
+        socket.off("error");
       };
-    }, [playerName, isHost, deck, table, gameId, gameStarted]);
-
-    const broadcastState = (newDeck, newTable, started = true) => {
-      setDeck(newDeck);
-      setTable(newTable);
-      setGameStarted(started);
-      if (gameId) {
-        socket.emit("update_state", { room: gameId, deck: newDeck, table: newTable, gameStarted: started });
-      }
-    };
-
-    const ensureSelfInPlayers = () => {
-      setPlayers(prev => {
-    	if (prev.length === 0) return [{ name: playerName, score: 0 }];
-    	const hasSelf = prev.some(p => p.name === playerName);
-    	return hasSelf ? prev : [...prev, { name: playerName, score: 0 }];
-       });
-      };
+    }, []);
 
     const startGame = (full = true) => {
       const d = makeDeck(full);
       const initDeck = d.slice(12);
       const initTable = d.slice(0, 12);
-      broadcastState(initDeck, initTable, true);
-      setSelected([]); setHinted([]); setMessage('');
       setTimer(0);
       setShowTutorial(false);
-      ensureSelfInPlayers(); // always show a scoreboard entry locally
+      setSelected([]); setHinted([]); setMessage('');
+      
+      if (gameId) {
+        socket.emit("start_game", { room: gameId, game_data: { deck: initDeck, table: initTable, gameStarted: true } });
+      } else {
+        // Single player mode
+        setDeck(initDeck);
+        setTable(initTable);
+        setGameStarted(true);
+        setPlayers([{ name: playerName || 'You', score: 0 }]);
+      }
     };
 
     const clickCard = idx => {
@@ -229,11 +216,14 @@
         const newCards = deck.slice(0, 3);
         const newTable = [...remaining, ...newCards];
         const newDeck = deck.slice(3);
-        broadcastState(newDeck, newTable);
-
-        // update score locally (works for single or multiplayer)
-        setPlayers(prev => prev.map(p => p.name === (playerName || 'You') ? { ...p, score: (p.score || 0) + 1 } : p));
-        if (gameId) socket.emit("score_update", { room: gameId, username: playerName || 'You' });
+        
+        if (gameId) {
+          socket.emit("submit_set", { room: gameId, username: playerName || 'You', newDeck, newTable });
+        } else {
+          setDeck(newDeck);
+          setTable(newTable);
+          setPlayers(prev => prev.map(p => p.name === (playerName || 'You') ? { ...p, score: (p.score || 0) + 1 } : p));
+        }
 
         setMessage("✅ Set found!");
         const noMoreCards = newDeck.length === 0;
@@ -259,20 +249,23 @@
       if (!deck.length) return setMessage("No more cards!");
       const newTable = [...table, ...deck.slice(0, 3)];
       const newDeck = deck.slice(3);
-      broadcastState(newDeck, newTable);
+      if (gameId) {
+        socket.emit("deal_three", { room: gameId, newDeck, newTable });
+      } else {
+        setTable(newTable);
+        setDeck(newDeck);
+      }
     };
 
     const createMultiplayer = () => {
       if (!playerName) return setMessage("Enter your name first!");
       socket.emit("create_room", { username: playerName });
-      ensureSelfInPlayers();
     };
 
     const joinMultiplayer = (joinCode) => {
       if (!playerName || !joinCode) return setMessage("Enter name + code!");
-      socket.emit("join_room", { username: playerName, room: joinCode });
       setGameId(joinCode);
-      ensureSelfInPlayers();
+      socket.emit("join_room", { username: playerName, room: joinCode });
     };
 
     return (
