@@ -1,7 +1,12 @@
+import os
 from flask import Flask, send_from_directory, request
 from flask_socketio import SocketIO, emit, join_room, leave_room
 import uuid
 
+# Flask application setup
+# We get the port from the environment, defaulting to 5000 if not set.
+# This is crucial for deployment on platforms like Render.
+port = int(os.environ.get('PORT', 5000))
 app = Flask(__name__, static_folder=".", static_url_path="")
 socketio = SocketIO(app, cors_allowed_origins="*")
 
@@ -87,4 +92,4 @@ def handle_deal_three(data):
         emit("game_state", rooms[room_id], room=room_id)
 
 if __name__ == "__main__":
-    socketio.run(app, host="0.0.0.0", port=1024, debug=True)
+    socketio.run(app, host="0.0.0.0", port=port, debug=True)
