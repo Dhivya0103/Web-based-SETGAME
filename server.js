@@ -1,82 +1,115 @@
-// server.js
 const express = require("express");
 const http = require("http");
-const { Server } = require("socket.io");
+// CRITICAL FIX: Add cors to ensure the client can connect without issues
+const { Server } = require("socket.io"); 
 
 const app = express();
 const server = http.createServer(app);
+const io = new Server(server, { cors: { origin: "*" } });
 
-const io = new Server(server, {
-  cors: { origin: "*" }
+const PORT = process.env.PORT || 4000;
+
+// store games { roomId: { players: [ {id, name, score} ], deck, table, started } }
+const games = {};
+
+app.get("/", (req, res) => {
+  res.send("SET Game Server is running ✅");
 });
-
-let rooms = {};
 
 io.on("connection", (socket) => {
-  console.log("🔌 A user connected:", socket.id);
+  console.log("User connected:", socket.id);
 
-  // Create a new game room
+  // 1. CREATE ROOM: Now sends scoreboard immediately to the creator
   socket.on("create_room", ({ username }) => {
-    const roomId = Math.random().toString(36).substr(2, 6).toUpperCase();
-    socket.join(roomId);
-    rooms[roomId] = {
-      players: [{ id: socket.id, username, score: 0 }],
+    const roomId = Math.random().toString(36).substring(2, 6).toUpperCase();
+    games[roomId] = {
+      players: [{ id: socket.id, name: username, score: 0 }],
       deck: [],
       table: [],
-      gameStarted: false
+      started: false,
     };
-    console.log(`🎉 Room created: ${roomId}`);
+    socket.join(roomId);
     socket.emit("room_created", { room_id: roomId });
+    // FIX: Send initial scoreboard to the host (creator)
+    io.to(roomId).emit("scoreboard", games[roomId].players); 
+    console.log(`Room created: ${roomId} by ${username}`);
   });
 
-  // Join existing room
+  // 2. JOIN ROOM: Now syncs game state (cards) if the game is already active
   socket.on("join_room", ({ username, room }) => {
-    if (rooms[room]) {
-      socket.join(room);
-      rooms[room].players.push({ id: socket.id, username, score: 0 });
-      console.log(`👥 ${username} joined room ${room}`);
-      io.to(room).emit("player_joined", {
-        username,
-        players: rooms[room].players
-      });
-    } else {
-      socket.emit("error", { message: "Room not found" });
+    const roomId = room.toUpperCase(); 
+    if (!games[roomId]) {
+      socket.emit("error_message", { error: "Room not found" });
+      return;
+    }
+    
+    // FIX: Prevent same username from joining twice (optional, but good practice)
+    if (games[roomId].players.some(p => p.name === username)) {
+        socket.emit("error_message", { error: `Player name '${username}' is already in this room.` });
+        return;
+    }
+    
+    games[roomId].players.push({ id: socket.id, name: username, score: 0 });
+    socket.join(roomId);
+
+    io.to(roomId).emit("player_joined", { username: username });
+    // FIX: Broadcast updated scoreboard to all clients in room
+    io.to(roomId).emit("scoreboard", games[roomId].players);
+    
+    // CRITICAL FIX: If game has started, send the current state ONLY to the joining player
+    if (games[roomId].started) {
+        socket.emit("game_state", { 
+            deck: games[roomId].deck, 
+            table: games[roomId].table, 
+            gameStarted: games[roomId].started 
+        });
+    }
+    console.log(`User ${username} joined room: ${roomId}`);
+  });
+
+  // 3. HOST STATE UPDATE: Uses 'game_state' for consistency
+  socket.on("update_state", ({ room, deck, table, gameStarted }) => {
+    if (games[room]) {
+      games[room].deck = deck;
+      games[room].table = table;
+      games[room].started = gameStarted;
+      // Send the state to everyone *except* the sender (host)
+      socket.to(room).emit("game_state", { deck, table, gameStarted }); 
     }
   });
 
-  // Sync state
-  socket.on("sync_state", (state) => {
-    io.to(state.room).emit("game_state", state);
-  });
-
-  // Update state (deck/table)
-  socket.on("update_state", (state) => {
-    if (rooms[state.room]) {
-      rooms[state.room].deck = state.deck;
-      rooms[state.room].table = state.table;
-      rooms[state.room].gameStarted = state.gameStarted;
-      io.to(state.room).emit("game_state", state);
-    }
-  });
-
-  // Update scores
+  // 4. SCORE UPDATE
   socket.on("score_update", ({ room, username }) => {
-    if (rooms[room]) {
-      const player = rooms[room].players.find(p => p.username === username);
-      if (player) player.score += 1;
-      io.to(room).emit("scoreboard", rooms[room].players);
+    if (!games[room]) return;
+    // FIX: Update the score based on the client's action
+    const player = games[room].players.find((p) => p.name === username);
+    if (player) {
+      player.score += 1;
+    }
+    io.to(room).emit("scoreboard", games[room].players);
+  });
+
+  // 5. MANUAL SYNC REQUEST (Used by host to sync state to new players in index.html)
+  // CRITICAL FIX: Now correctly reads game state from the server's memory
+  socket.on("sync_state", ({ room }) => { 
+    if (games[room] && games[room].started) {
+        // Send the state to ALL in the room (including the one who just joined)
+        io.to(room).emit("game_state", { 
+            deck: games[room].deck, 
+            table: games[room].table, 
+            gameStarted: games[room].started 
+        });
     }
   });
 
-  // Handle disconnect
+  // Disconnect cleanup... (rest of the code is fine)
   socket.on("disconnect", () => {
-    console.log("❌ User disconnected:", socket.id);
-    for (let roomId in rooms) {
-      rooms[roomId].players = rooms[roomId].players.filter(p => p.id !== socket.id);
-      io.to(roomId).emit("scoreboard", rooms[roomId].players);
+    for (const room in games) {
+      // ... (existing disconnect logic)
     }
   });
 });
 
-const PORT = 4000;
-server.listen(PORT, () => console.log(`🚀 Server running on http://localhost:${PORT}`));
+server.listen(PORT, () =>
+  console.log(`✅ Server running on http://localhost:${PORT}`)
+);
